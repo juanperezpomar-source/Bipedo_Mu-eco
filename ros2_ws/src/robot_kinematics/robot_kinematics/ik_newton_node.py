@@ -25,7 +25,7 @@ from rclpy.node import Node
 
 from robot_interfaces.msg import IKJacobTarget, IKResult
 
-from robot_kinematics.kinem_invers_leg_Newton_izq import (
+from robot_kinematics.kinem_invers_leg_Newton_MUNECO_izq import (
     cinematica_inversa_pata_newton,
     joint_limit_warnings,
 )

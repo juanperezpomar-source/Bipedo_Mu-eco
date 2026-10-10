@@ -23,7 +23,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Point
 from robot_interfaces.msg import IKResult
 
-from robot_kinematics.kinem_invers_leg_mth_desacople_izq import (
+from robot_kinematics.kinem_invers_leg_mth_desacople_MUNECO_izq import (
     cinematica_inversa_pata_des_xyz,
     joint_limit_warnings,
 )

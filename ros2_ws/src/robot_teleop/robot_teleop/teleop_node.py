@@ -53,14 +53,14 @@ from tkinter import ttk
 # IMPORTACIÓN DE CINEMÁTICA
 # ------------------------------------------------------------
 
-from robot_kinematics.cinematica_directa_der_izq import (
+from robot_kinematics.cinematica_directa_der_MUNECO_izq import (
     forward_kinematics_right,
     forward_kinematics_left,
     get_position,
     L1, L2, L3, L4, L5
 )
 
-from robot_kinematics.kinem_invers_leg_mth_izq import verificar_con_mth
+from robot_kinematics.kinem_invers_leg_mth_MUNECO_izq import verificar_con_mth
 
 
 # ------------------------------------------------------------

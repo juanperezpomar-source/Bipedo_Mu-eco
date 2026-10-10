@@ -25,7 +25,7 @@ from rclpy.node import Node
 
 from robot_interfaces.msg import IKJacobTarget, IKResult
 
-from robot_kinematics.kinem_invers_leg_gradiente_descendente import (
+from robot_kinematics.kinem_invers_leg_gradiente_descendente_MUNECO_izq import (
     cinematica_inversa_pata_grad,
     joint_limit_warnings,
 )
