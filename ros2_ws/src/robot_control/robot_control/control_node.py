@@ -136,6 +136,33 @@ class ControlNode(Node):
 
 
         # ====================================================
+        # INVERSIÓN DEL KNEE PITCH HACIA RVIZ (opcional)
+        # ====================================================
+        #
+        # False (por defecto): RViz recibe el mismo ángulo que la
+        # GUI y la cinemática. Comparando el URDF del muñeco
+        # (Muneco_Bipedo_URDF_V3) con la tabla DH
+        # (cinematica_directa_der_MUNECO_izq), con +Knee Pitch los
+        # dos llevan el pie hacia ATRÁS (la rodilla se recoge) y
+        # el pie coincide a ~1 mm en la zona de dibujo. Invertir
+        # el signo hacía que RViz doblara la rodilla al revés que
+        # la cinemática inversa (el pie se iba hacia adelante) y
+        # el rastro de IK/trayectorias no caía sobre el pie.
+        #
+        # True: vuelve al comportamiento anterior (signo invertido
+        # solo hacia /joint_states y /robot/joint_commands).
+        #
+        # /robot/joint_states (estado interno que lee la GUI)
+        # nunca se invierte.
+        # ====================================================
+
+        self.declare_parameter(
+            'invert_knee_rviz',
+            False
+        )
+
+
+        # ====================================================
         # LECTURA INICIAL DE PARÁMETROS
         # ====================================================
 
@@ -253,10 +280,11 @@ class ControlNode(Node):
             f'joints={self.n}'
         )
 
-        self.get_logger().info(
-            'Knee Pitch: signo invertido antes de publicar '
-            'a RViz y actuadores'
-        )
+        if self.get_parameter('invert_knee_rviz').value:
+            self.get_logger().info(
+                'Knee Pitch: signo invertido antes de publicar '
+                'a RViz y simulación (invert_knee_rviz=True)'
+            )
 
 
     # ========================================================
@@ -529,59 +557,34 @@ class ControlNode(Node):
 
 
         # ====================================================
-        # CAMBIO: INVERSIÓN DEL KNEE PITCH
+        # POSICIÓN HACIA RVIZ / SIMULACIÓN
         # ====================================================
         #
-        # El problema detectado es que el sentido positivo de
-        # Left_Knee_Joint en el URDF utilizado por
-        # robot_state_publisher/RViz es contrario al sentido
-        # que definimos para el Knee Pitch del robot.
-        #
-        # Convención de trabajo:
-        #
-        #       +Knee Pitch
-        #             ↓
-        #       rodilla se recoge
-        #
-        # Para conseguir ese mismo movimiento en RViz y en el
-        # actuador, invertimos únicamente el índice 2:
-        #
-        #       0 -> Hip Roll
-        #       1 -> Hip Pitch
-        #       2 -> Knee Pitch
-        #
-        # Por ejemplo:
-        #
-        #       +30° = +0.5236 rad
-        #
-        # pasa a:
-        #
-        #       -30° = -0.5236 rad
-        #
-        # IMPORTANTE:
-        #
-        # La GUI y la lógica interna del control siguen usando
-        # +30° como el valor solicitado.
-        #
-        # La inversión ocurre solamente al publicar el resultado.
+        # Igual que la de la GUI, salvo que invert_knee_rviz=True
+        # (ver la declaración del parámetro): en ese caso se
+        # invierte solo el índice 2 (Knee Pitch).
         #
         # ====================================================
 
-        if self.n >= 3:
+        visual = list(state.position)
 
-            state.position[2] = -state.position[2]
+        if (
+            self.n >= 3
+            and self.get_parameter('invert_knee_rviz').value
+        ):
+
+            visual[2] = -visual[2]
 
 
         # ====================================================
         # PUBLICAR ESTADO
         # ====================================================
         #
-        # Este valor ya contiene la inversión del Knee Pitch.
+        # /robot/joint_states lleva la convención de la GUI;
+        # /joint_states lleva "visual" (invert_knee_rviz).
         #
         # /joint_states -> robot_state_publisher -> RViz
         #
-        # Por lo tanto RViz recibe el signo necesario para que
-        # el movimiento visual coincida con nuestra convención.
         #
         # ====================================================
 
@@ -591,7 +594,7 @@ class ControlNode(Node):
 
 
         self.publish_std(
-            state.position,
+            visual,
             state.effort
         )
 
@@ -605,14 +608,14 @@ class ControlNode(Node):
         #
         # Por eso NO es necesario modificar sim_bridge.
         #
-        # El Knee Pitch ya sale con el signo invertido.
+        # Sale con la misma posición que RViz ("visual").
         #
         # ====================================================
 
         cmd = JointTarget()
 
         cmd.position = list(
-            state.position
+            visual
         )
 
         cmd.velocity = [
@@ -644,8 +647,8 @@ class ControlNode(Node):
         es utilizado por robot_state_publisher para generar
         los TF que RViz utiliza para visualizar el robot.
 
-        La posición recibida aquí ya contiene la conversión
-        necesaria del Knee Pitch.
+        La posición recibida aquí es la de RViz ("visual",
+        ver invert_knee_rviz).
         """
 
         msg = SensorJointState()

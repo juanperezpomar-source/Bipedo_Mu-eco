@@ -26,6 +26,19 @@ Visualization Manager:
       Name: RobotModel
       Update Interval: 0
       Visual Enabled: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Rastro del pie (IK / trayectorias)
+      Namespaces:
+        ik_trail: true
+        papel: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot/ik_trail
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -39,11 +52,11 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 2.5
+      Distance: 1.0
       Focal Point:
-        X: 0.25
+        X: 0
         Y: 0
-        Z: 0.1
+        Z: 0.2
       Name: Current View
       Pitch: 0.45
       Target Frame: world

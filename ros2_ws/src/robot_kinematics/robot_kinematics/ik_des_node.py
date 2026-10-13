@@ -21,6 +21,7 @@ import rclpy
 from rclpy.node import Node
 
 from geometry_msgs.msg import Point
+from std_msgs.msg import Float64MultiArray
 from robot_interfaces.msg import IKResult
 
 from robot_kinematics.kinem_invers_leg_mth_desacople_MUNECO_izq import (
@@ -45,18 +46,38 @@ class IKDesNode(Node):
         self.target_sub = self.create_subscription(
             Point, '/robot/ik_des_target', self.on_target, 10)
 
+        # Canal adicional: [x_mm, y_mm, z_mm, rama]; rama +1 arriba, -1 abajo.
+        self.branch_target_sub = self.create_subscription(
+            Float64MultiArray, '/robot/ik_des_target_branch', self.on_branch_target, 10)
+
         self.result_pub = self.create_publisher(
             IKResult, '/robot/ik_des_result', 10)
 
         self.get_logger().info(
             f'ik_des_node listo (pierna {self.leg_side})')
 
+    def on_branch_target(self, msg):
+        if len(msg.data) != 4 or not all(np.isfinite(v) for v in msg.data):
+            self.get_logger().error(
+                'Solicitud IK inválida: se requieren [x, y, z, rama] finitos.'
+            )
+            return
+        x, y, z, signo = msg.data
+        if signo not in (1.0, -1.0):
+            self.get_logger().error('La rama debe ser +1 (arriba) o -1 (abajo).')
+            return
+        self.resolver_objetivo(x, y, z, 'arriba' if signo == 1.0 else 'abajo')
+
     def on_target(self, msg):
+        # Compatibilidad con publicadores anteriores: Point implica codo arriba.
+        self.resolver_objetivo(msg.x, msg.y, msg.z, 'arriba')
+
+    def resolver_objetivo(self, x, y, z, codo):
         # Objetivo expresado en el sistema de la pierna izquierda.
-        z = -msg.z if self.leg_side == 'right' else msg.z
+        z_izq = -z if self.leg_side == 'right' else z
 
         q1, q2, q3, alcanzable = cinematica_inversa_pata_des_xyz(
-            msg.x, msg.y, z)
+            x, y, z_izq, codo=codo)
 
         result = IKResult()
         result.reachable = bool(alcanzable)
@@ -70,7 +91,7 @@ class IKDesNode(Node):
         else:
             result.position = []
             self.get_logger().warn(
-                f'Objetivo ({msg.x:.1f}, {msg.y:.1f}, {msg.z:.1f}) '
+                f'Objetivo ({x:.1f}, {y:.1f}, {z:.1f}) '
                 f'no alcanzable.'
             )
 

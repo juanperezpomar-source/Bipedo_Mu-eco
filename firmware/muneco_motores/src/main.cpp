@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Wire.h>
 #include <math.h>
 
 #include <micro_ros_platformio.h>
@@ -18,9 +19,9 @@
 // Muneco bipedo - Pata izquierda - Firmware ESP32 con micro-ROS
 //
 // 3 servos directo a GPIO (PWM LEDC 50 Hz, 16 bits), sin PCA9685:
-//   r  Hip Roll   DS3245 (180 grados) -> GPIO18
-//   h  Hip Pitch  DS3240 (270 grados) -> GPIO19
-//   k  Knee       DS3240 (270 grados) -> GPIO21
+//   r  Hip Roll   DS3245 (180 grados) -> GPIO27
+//   h  Hip Pitch  DS3240 (270 grados) -> GPIO26
+//   k  Knee       DS3240 (270 grados) -> GPIO25
 //
 // Suscripcion:  /servo_commands  (std_msgs/Float32MultiArray)
 //   data[i] = q_i + offset_i  (lo que publica teleop_node)
@@ -32,8 +33,17 @@
 //   angulo 0 -> 500 us, angulo = rango -> 2500 us
 //
 // Publicacion:  /servo_states  (std_msgs/Float32MultiArray)
-//   Posicion actual de cada servo, en el mismo marco que
-//   /servo_commands (q + offset).
+//   Posicion MEDIDA por el encoder de cada articulacion, en el
+//   mismo marco que /servo_commands (q + offset). Si un encoder
+//   no responde o no esta calibrado se publica la posicion de la
+//   rampa de ese servo.
+//
+// Publicacion:  /encoder_raw  (std_msgs/Float32MultiArray)
+//   Lectura cruda de los AS5600 (0..4095, -1 si no responde).
+//   Solo para calibrar ENC_CERO / ENC_SIGNO.
+//
+// Encoders AS5600 (0x36) detras de un TCA9548A (0x70), I2C SDA 21 SCL 22:
+//   q = signo * (raw - cero) * 360/4096   (diferencia llevada a +-180)
 //
 // Los servos arrancan apagados (sin pulso). Con el primer comando
 // cada servo se activa en q = 0 y desde ahi viaja con
@@ -65,11 +75,27 @@ struct Servo {
   bool on;
 };
 
+// Encoders: canal del TCA9548A, raw cuando q = 0 (-1 = sin calibrar)
+// y signo para que +raw siga a +q.                       <-- AJUSTABLE
+struct Encoder {
+  uint8_t canal;
+  int cero;
+  int signo;
+  int raw;            // ultima lectura (-1 = no responde)
+};
+
+Encoder E[NUM_SERVOS] = {
+  // canal, cero, signo
+  {0, 3035, +1, -1},  // roll cadera     (calibrado: q=0 -> 3035, q=+20 -> 3242)
+  {6, 3798, -1, -1},  // pitch cadera    (calibrado: q=0 -> 3798, q=+20 -> 3575)
+  {7, 1083, -1, -1},  // pitch rodilla   (calibrado: q=0 -> 1083, q=+20 -> 868)
+};
+
 Servo S[NUM_SERVOS] = {
   // name,                 pin, ch, rango, inv,   offset, cero
-  {"roll cadera DS3245",   18, 0, 180,  true,  180,    180, 0, 0, false},
-  {"pitch cadera DS3240",  19, 1, 270,  false, 135,    135, 0, 0, false},
-  {"pitch rodilla DS3240", 21, 2, 270,  false, 135,    135, 0, 0, false},
+  {"roll cadera DS3245",   27, 0, 180,  true,  180,    180, 0, 0, false},
+  {"pitch cadera DS3240",  26, 1, 270,  false, 135,    135, 0, 0, false},
+  {"pitch rodilla DS3240", 25, 2, 270,  true,  135,    135, 0, 0, false},  // inv: +q = rodilla se recoge (como en RViz/IK)
 };
 
 const float VEL_DEG_S = 30;   // velocidad de la rampa
@@ -106,6 +132,46 @@ void activar(Servo& s) {
 }
 
 // ============================================================
+// Encoders AS5600 detras del TCA9548A
+// ============================================================
+
+const int PIN_SDA = 21;
+const int PIN_SCL = 22;
+const uint8_t ADDR_TCA9548A = 0x70;
+const uint8_t ADDR_AS5600   = 0x36;
+
+bool tcaSelect(uint8_t canal) {
+  Wire.beginTransmission(ADDR_TCA9548A);
+  Wire.write(canal > 7 ? 0 : (1 << canal));
+  return Wire.endTransmission() == 0;
+}
+
+// Angulo crudo 0..4095, -1 si no responde
+int leerAS5600(uint8_t canal) {
+  if (!tcaSelect(canal)) return -1;
+  Wire.beginTransmission(ADDR_AS5600);
+  Wire.write(0x0C);                              // RAW ANGLE
+  if (Wire.endTransmission(false) != 0) return -1;
+  if (Wire.requestFrom((int)ADDR_AS5600, 2) != 2) return -1;
+  int hi = Wire.read(), lo = Wire.read();
+  return ((hi & 0x0F) << 8) | lo;
+}
+
+void leerEncoders() {
+  for (int i = 0; i < NUM_SERVOS; i++) E[i].raw = leerAS5600(E[i].canal);
+  tcaSelect(8);                                  // ningun canal
+}
+
+// q medido (grados); NAN si no hay lectura o no esta calibrado
+float qEncoder(const Encoder& e) {
+  if (e.raw < 0 || e.cero < 0) return NAN;
+  int d = e.raw - e.cero;
+  if (d >= 2048) d -= 4096;
+  if (d < -2048) d += 4096;
+  return e.signo * d * (360.0f / 4096.0f);
+}
+
+// ============================================================
 // micro-ROS
 // ============================================================
 
@@ -117,14 +183,17 @@ rcl_node_t node;
 rcl_allocator_t allocator;
 rcl_subscription_t subscription;
 rcl_publisher_t publisher;
+rcl_publisher_t raw_publisher;
 rclc_executor_t executor;
 rcl_timer_t timer;
 
 std_msgs__msg__Float32MultiArray cmd_msg;
 std_msgs__msg__Float32MultiArray state_msg;
+std_msgs__msg__Float32MultiArray raw_msg;
 
 float cmd_data[NUM_SERVOS];
 float state_data[NUM_SERVOS];
+float raw_data[NUM_SERVOS];
 
 enum Estado { ESPERANDO_AGENTE, AGENTE_DISPONIBLE, AGENTE_CONECTADO, AGENTE_DESCONECTADO };
 Estado estado = ESPERANDO_AGENTE;
@@ -143,13 +212,19 @@ void cmd_callback(const void* msgin) {
   }
 }
 
-// Publica la posicion actual en el marco de /servo_commands.
+// Publica la posicion medida en el marco de /servo_commands
+// (rampa si el encoder no responde o no esta calibrado) y el raw.
 void state_timer_callback(rcl_timer_t* timer, int64_t last_call_time) {
   (void)last_call_time;
   if (timer == NULL) return;
-  for (int i = 0; i < NUM_SERVOS; i++)
-    state_data[i] = S[i].actual + S[i].offset;
+  leerEncoders();
+  for (int i = 0; i < NUM_SERVOS; i++) {
+    float q = qEncoder(E[i]);
+    state_data[i] = (isnan(q) ? S[i].actual : q) + S[i].offset;
+    raw_data[i] = E[i].raw;
+  }
   RCSOFTCHECK(rcl_publish(&publisher, &state_msg, NULL));
+  RCSOFTCHECK(rcl_publish(&raw_publisher, &raw_msg, NULL));
 }
 
 bool crear_entidades() {
@@ -176,6 +251,15 @@ bool crear_entidades() {
       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
       "servo_states"));
 
+  raw_msg.data.data = raw_data;
+  raw_msg.data.capacity = NUM_SERVOS;
+  raw_msg.data.size = NUM_SERVOS;
+
+  RCCHECK(rclc_publisher_init_default(
+      &raw_publisher, &node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+      "encoder_raw"));
+
   RCCHECK(rclc_timer_init_default(
       &timer, &support, RCL_MS_TO_NS(100), state_timer_callback));
 
@@ -193,6 +277,7 @@ void destruir_entidades() {
   (void)rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
 
   RCSOFTCHECK(rcl_publisher_fini(&publisher, &node));
+  RCSOFTCHECK(rcl_publisher_fini(&raw_publisher, &node));
   RCSOFTCHECK(rcl_subscription_fini(&subscription, &node));
   RCSOFTCHECK(rcl_timer_fini(&timer));
   RCSOFTCHECK(rclc_executor_fini(&executor));
@@ -212,6 +297,10 @@ void setup() {
     PWM_ATTACH(S[i].pin, S[i].ch);
     PWM_WRITE(S[i].pin, S[i].ch, 0);
   }
+
+  Wire.begin(PIN_SDA, PIN_SCL);
+  Wire.setClock(400000);
+  Wire.setTimeOut(5);
 
   Serial.begin(115200);
   set_microros_serial_transports(Serial);

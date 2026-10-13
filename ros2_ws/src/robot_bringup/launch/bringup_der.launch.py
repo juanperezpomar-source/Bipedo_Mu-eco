@@ -380,6 +380,28 @@ def generate_launch_description():
 
 
     # ==================================================================
+    # 3b. ENCODERS DE LOS SERVOS (lee /servo_states y /encoder_raw de
+    #     la ESP32 y publica /robot/encoder_joint_states y estado)
+    # ==================================================================
+
+    encoders = Node(
+        package='robot_control',
+
+        executable='servo_encoders',
+
+        name='servo_encoders',
+
+        parameters=[
+            {
+                'joint_names': JOINT_NAMES,
+            }
+        ],
+
+        output='screen'
+    )
+
+
+    # ==================================================================
     # 4. PUENTE CON LA SIMULACIÓN
     # ==================================================================
 
@@ -495,6 +517,7 @@ def generate_launch_description():
         ik_geom,
         ik_grad,
         control,
+        encoders,
         sim,
         teleop,
         rviz,

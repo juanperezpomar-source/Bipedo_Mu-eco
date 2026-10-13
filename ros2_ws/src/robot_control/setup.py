@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'control_node = robot_control.control_node:main',
+            'servo_encoders = robot_control.servo_encoders:main',
         ],
     },
 )

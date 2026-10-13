@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import find_packages, setup
 
 package_name = 'robot_kinematics'
@@ -10,6 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/trayectorias',
+            glob('trayectorias/*.txt')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
